@@ -1,3 +1,0 @@
-paste latest
-abort transcription
-transcribe latest again (or from filename)
