@@ -20,6 +20,7 @@ from config_manager import ConfigManager
 from audio_manager import AudioManager
 from transcription_service import TranscriptionService
 from text_insertion import TextInsertion
+from notification_widget import NotificationWidget
 
 class TranscriptionWorker(QThread):
     """Worker thread for handling transcription."""
@@ -108,6 +109,9 @@ class VoiceTypingSystem(QApplication):
         self.transcription_service = TranscriptionService(self.config)
         self.text_insertion = TextInsertion()
         
+        # Connect audio manager signal
+        self.audio_manager.recording_finished.connect(self.on_recording_complete)
+
         # Application state
         self.state = 'IDLE'
         self.transcription_worker = None
@@ -125,6 +129,9 @@ class VoiceTypingSystem(QApplication):
         self.setup_system_tray()
         self.setup_hotkey_listener()
         
+        # Setup custom notification widget
+        self.notification = NotificationWidget()
+
         logging.info("Voice Typing System initialized")
     
     def load_activation_state(self):
@@ -247,6 +254,10 @@ class VoiceTypingSystem(QApplication):
         if self.state == 'RECORDING' or not self.activated:
             return
         
+        # Hide any existing notification before starting a new recording
+        if self.notification.isVisible():
+            self.notification.hide()
+
         logging.debug("ACTION: Start recording requested.")
         self.state = 'RECORDING'
         self.update_visuals()
@@ -256,7 +267,7 @@ class VoiceTypingSystem(QApplication):
         # Preload the model in background thread for faster transcription
         self.preload_model_async()
         # Start recording
-        self.audio_manager.start_recording(self.on_recording_complete)
+        self.audio_manager.start_recording()
         logging.info("Recording started")
     
     def stop_recording(self):
@@ -300,6 +311,7 @@ class VoiceTypingSystem(QApplication):
     
     def on_recording_complete(self, audio_file, metadata):
         """Called when audio recording is complete."""
+        # This function is now guaranteed to run in the main GUI thread
         if audio_file is None:
             logging.error("Audio recording failed or no audio captured")
             if 'error' in metadata:
@@ -309,23 +321,14 @@ class VoiceTypingSystem(QApplication):
             self.state = 'ERROR'
             self.update_visuals()
             # Show notification
-            self.tray_icon.showMessage(
-                "Voice Typing System",
-                "Recording failed - no audio captured",
-                QSystemTrayIcon.MessageIcon.Warning,
-                3000
-            )
+            self.notification.show_message("Recording failed - no audio captured")
             return
         logging.info(f"Recording complete: {audio_file}")
         # Notify if clipping detected
         if metadata.get('clipping_detected'):
             percent = metadata.get('clipping_percent', 0.0)
-            self.tray_icon.showMessage(
-                "Voice Typing System",
-                f"Warning: {percent:.2f}% of your recording is clipped. Consider lowering your microphone input level in system settings.",
-                QSystemTrayIcon.MessageIcon.NoIcon,
-                5000
-            )
+            message = f"Warning: {percent:.2f}% of your recording is clipped.\nConsider lowering your microphone input level."
+            self.notification.show_message(message)
             logging.info(f"Clipping detected: {percent:.2f}%")
         
         logging.debug("EVENT: Recording complete with success.")
@@ -364,16 +367,12 @@ class VoiceTypingSystem(QApplication):
             else:
                 logging.warning("Failed to insert text - no text box in focus")
                 self.state = 'IDLE'
-                self.tray_icon.showMessage(
-                    "Voice Typing System",
-                    "Transcription complete, no text box in focus",
-                    QSystemTrayIcon.MessageIcon.Information,
-                    3000
-                )
+                self.notification.show_message("Transcription complete, no text box in focus")
         else:
             logging.debug("EVENT: Transcription complete with failure.")
             logging.error("Transcription failed")
             self.state = 'ERROR'
+            self.notification.show_message("Transcription failed")
         
         self.update_visuals()
             

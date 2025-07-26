@@ -13,10 +13,13 @@ import logging
 from datetime import datetime
 import numpy as np
 from scipy.signal import resample_poly
+from PyQt6.QtCore import QObject, pyqtSignal
 
-class AudioManager:
+class AudioManager(QObject):
     """Manages audio recording and device selection."""
     
+    recording_finished = pyqtSignal(object, object)
+
     def __init__(self, config_manager, state_manager=None):
         """
         Initialize audio manager.
@@ -24,6 +27,7 @@ class AudioManager:
         Args:
             config_manager: Configuration manager instance
         """
+        super().__init__()
         self.config = config_manager
         self.audio = pyaudio.PyAudio()
         self.recording = False
@@ -86,13 +90,8 @@ class AudioManager:
             return self.devices[self.current_device]['name']
         return "No device selected"
     
-    def start_recording(self, on_recording_complete: Callable[[Optional[Path], Dict], None]):
-        """
-        Start audio recording.
-        
-        Args:
-            on_recording_complete: Callback function called when recording is complete
-        """
+    def start_recording(self):
+        """Start audio recording."""
         if self.recording:
             logging.warning("Recording already in progress")
             return
@@ -107,7 +106,6 @@ class AudioManager:
         # Start recording in a separate thread
         self.recording_thread = threading.Thread(
             target=self._record_audio,
-            args=(on_recording_complete,)
         )
         self.recording_thread.start()
         
@@ -153,7 +151,7 @@ class AudioManager:
         if self.devices:
             self.current_device = list(self.devices.keys())[0]
 
-    def _record_audio(self, on_recording_complete: Callable[[Optional[Path], Dict], None]):
+    def _record_audio(self):
         """Internal method to record audio."""
         self.aborted = False  # Reset aborted state at start
         try:
@@ -224,16 +222,16 @@ class AudioManager:
                     logging.info(f"Resampled audio saved: {resampled_file}")
                     # Optionally delete original
                     # audio_file.unlink()
-                    on_recording_complete(resampled_file, metadata)
+                    self.recording_finished.emit(resampled_file, metadata)
                 except Exception as e:
                     logging.error(f"Resampling failed: {e}. Keeping original file.")
-                    on_recording_complete(audio_file, metadata)
+                    self.recording_finished.emit(audio_file, metadata)
             else:
-                on_recording_complete(audio_file, metadata)
+                self.recording_finished.emit(audio_file, metadata)
         except Exception as e:
             logging.error(f"Error during audio recording: {e}")
             self.recording = False
-            on_recording_complete(None, {'error': str(e)})
+            self.recording_finished.emit(None, {'error': str(e)})
     
     def _save_audio_file(self, sample_rate, channels) -> tuple[Path, Dict]:
         """
