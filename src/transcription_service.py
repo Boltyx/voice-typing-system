@@ -210,6 +210,35 @@ class TranscriptionService:
         except (IOError, json.JSONDecodeError) as e:
             logging.error(f"Failed to update metadata file {metadata_file}: {e}")
 
+    def save_manual_transcript(self, session_dir: Path, transcript: str, metadata: Dict):
+        """
+        Save a manually initiated transcript to a file.
+        
+        Args:
+            session_dir: Directory for this recording session.
+            transcript: Transcribed text.
+            metadata: Recording metadata (can be empty).
+        """
+        try:
+            # Save transcript to a different file to not overwrite the original
+            transcript_file = session_dir / "manual_transcript.txt"
+            with open(transcript_file, 'w', encoding='utf-8') as f:
+                f.write(transcript)
+            
+            # Update metadata with manual transcription info
+            update_data = {
+                'manual_transcript_file': str(transcript_file),
+                'manual_transcript_length': len(transcript),
+                'manual_transcription_time': datetime.now().isoformat(),
+                'status': 'manually_transcribed'
+            }
+            self.update_metadata(session_dir, update_data)
+            
+            logging.info(f"Manual transcript saved to: {transcript_file}")
+
+        except Exception as e:
+            logging.error(f"Error saving manual transcript: {e}")
+
     def save_failed_transcription(self, session_dir: Path, metadata: Dict, error: str):
         """
         Save metadata for failed transcription.

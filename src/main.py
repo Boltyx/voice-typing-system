@@ -79,6 +79,30 @@ class TranscriptionWorker(QThread):
         """Stop the worker thread gracefully."""
         self._running = False
 
+class ManualTranscriptionWorker(QThread):
+    """Worker thread for handling manual transcription."""
+    
+    transcription_complete = pyqtSignal(str, bool)  # text, success
+    
+    def __init__(self, transcription_service, audio_file):
+        super().__init__()
+        self.transcription_service = transcription_service
+        self.audio_file = audio_file
+        self.session_dir = audio_file.parent
+    
+    def run(self):
+        """Run transcription in background thread."""
+        try:
+            transcript = self.transcription_service.transcribe_audio(self.audio_file, {})
+            if transcript is not None:
+                self.transcription_service.save_manual_transcript(self.session_dir, transcript, {})
+                self.transcription_complete.emit(transcript, True)
+            else:
+                self.transcription_complete.emit("", False)
+        except Exception as e:
+            logging.error(f"Error in manual transcription worker: {e}")
+            self.transcription_complete.emit("", False)
+
 class StateManager(dict):
     def __init__(self, path):
         self.path = Path(path)
@@ -116,6 +140,7 @@ class VoiceTypingSystem(QApplication):
         # Application state
         self.state = 'IDLE'
         self.transcription_worker = None
+        self.manual_transcription_worker = None
         self.activated = True  # Default to activated
         self.last_transcript_text = None # To store the last successful transcript
         
@@ -298,6 +323,75 @@ class VoiceTypingSystem(QApplication):
         self.update_menu_state()
         logging.info("Recording aborted by user")
 
+    def on_manual_transcription_complete(self, transcript, success):
+        """Called when a manual transcription is complete."""
+        if success:
+            self.last_transcript_text = transcript
+            self.notification.show_message("Manual transcription complete.\nReady to be copied from clipboard.")
+            logging.info("Manual transcription successful.")
+        else:
+            self.notification.show_message("Manual transcription failed.")
+            logging.error("Manual transcription failed.")
+
+        self.state = 'IDLE'
+        self.update_visuals()
+        self.update_menu_state()
+
+    def transcribe_audio_file(self, audio_file: Path):
+        """Starts a manual transcription for a given audio file."""
+        if not audio_file or not audio_file.exists():
+            self.notification.show_message("Audio file not found.")
+            return
+
+        self.state = 'PROCESSING'
+        self.update_visuals()
+        self.update_menu_state()
+
+        self.manual_transcription_worker = ManualTranscriptionWorker(self.transcription_service, audio_file)
+        self.manual_transcription_worker.transcription_complete.connect(self.on_manual_transcription_complete)
+        self.manual_transcription_worker.start()
+
+    def transcribe_latest_file(self):
+        """Finds and transcribes the most recent audio file."""
+        recording_dir = self.config.get_recording_directory()
+        try:
+            # Find the most recent session directory
+            session_dirs = [d for d in recording_dir.iterdir() if d.is_dir()]
+            if not session_dirs:
+                self.notification.show_message("No recordings found.")
+                return
+
+            latest_dir = max(session_dirs, key=lambda d: d.stat().st_mtime)
+            
+            # Prefer the resampled 16kHz file if it exists
+            audio_file_16khz = latest_dir / "audio_16khz.wav"
+            audio_file_orig = latest_dir / "audio.wav"
+
+            if audio_file_16khz.exists():
+                self.transcribe_audio_file(audio_file_16khz)
+            elif audio_file_orig.exists():
+                self.transcribe_audio_file(audio_file_orig)
+            else:
+                self.notification.show_message(f"No audio file found in {latest_dir.name}.")
+
+        except Exception as e:
+            logging.error(f"Error finding latest file: {e}")
+            self.notification.show_message("Error finding latest recording.")
+
+    def transcribe_chosen_file(self):
+        """Opens a file dialog to choose a file to transcribe."""
+        from PyQt6.QtWidgets import QFileDialog
+
+        # The QFileDialog must be created with a parent widget
+        file_dialog = QFileDialog(None)
+        file_dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+        file_dialog.setNameFilter("Audio files (*.wav *.mp3 *.flac)")
+        
+        if file_dialog.exec():
+            filenames = file_dialog.selectedFiles()
+            if filenames:
+                self.transcribe_audio_file(Path(filenames[0]))
+
     def preload_model_async(self):
         """Preload the model in a background thread."""
         def preload_worker():
@@ -431,6 +525,15 @@ class VoiceTypingSystem(QApplication):
         open_dir_action.triggered.connect(self.open_recording_directory)
         self.tray_menu.addAction(open_dir_action)
 
+        # Manual Transcribe submenu
+        self.manual_transcribe_menu = self.tray_menu.addMenu("Manual Transcribe")
+        latest_action = QAction("Transcribe Latest File", self)
+        latest_action.triggered.connect(self.transcribe_latest_file)
+        self.manual_transcribe_menu.addAction(latest_action)
+        choose_action = QAction("Choose File...", self)
+        choose_action.triggered.connect(self.transcribe_chosen_file)
+        self.manual_transcribe_menu.addAction(choose_action)
+
         # Add "Copy to Clipboard" action
         self.copy_to_clipboard_action = QAction("Add latest to clipboard", self)
         self.copy_to_clipboard_action.triggered.connect(self.copy_last_transcript_to_clipboard)
@@ -498,7 +601,8 @@ class VoiceTypingSystem(QApplication):
             self.activate_action.setText("Activate")
             self.record_action.setEnabled(False)
         
-        # Enable/disable abort action based on recording state
+        # Enable/disable submenus based on state
+        self.manual_transcribe_menu.setEnabled(self.state == 'IDLE')
         self.abort_action.setEnabled(self.state == 'RECORDING')
         self.copy_to_clipboard_action.setEnabled(self.last_transcript_text is not None)
     
@@ -533,5 +637,4 @@ def main():
     sys.exit(app.exec())
 
 if __name__ == "__main__":
-    main() 
     main() 
