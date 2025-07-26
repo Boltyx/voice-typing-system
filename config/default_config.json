@@ -1,18 +1,18 @@
 {
   "api": {
-    "use_external_service": true,
+    "use_external_service": false,
     "timeout": 300,
     "internal_service": {
       "protocol": "http",
-      "host": "10.0.0.46",
-      "port": 5000
+      "host": null,
+      "port": null
     },
     "external_service": {
       "protocol": "https",
-      "host": "vts.epileptico.com",
+      "host": null,
       "port": 443,
-      "username": "david",
-      "password": "Sassieflygplanhelikopter12"
+      "username": null,
+      "password": null
     }
   },
   "audio": {

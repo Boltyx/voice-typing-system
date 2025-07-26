@@ -8,3 +8,6 @@ src/__pycache__/
 *.pywz
 *.pyzw
 *.pyzwz
+
+# Environment file
+.env

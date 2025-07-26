@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from typing import Dict, Any
 import logging
+from dotenv import load_dotenv
 
 class ConfigManager:
     """Manages application configuration with defaults and user overrides."""
@@ -33,7 +34,13 @@ class ConfigManager:
         self._setup_logging()
     
     def _load_config(self) -> Dict[str, Any]:
-        """Load configuration from default and user files."""
+        """Load configuration from default, user, and environment files."""
+        # Load .env file from project root. This will set environment variables.
+        # It's safe to call this even if the file doesn't exist.
+        dotenv_path = self.config_dir.parent / '.env'
+        load_dotenv(dotenv_path=dotenv_path)
+        logging.info(f"Attempting to load .env file from: {dotenv_path}")
+
         # Load default config
         with open(self.default_config_file, 'r') as f:
             default_config = json.load(f)
@@ -50,11 +57,44 @@ class ConfigManager:
         # Merge configurations (user config overrides defaults)
         config = self._merge_configs(default_config, user_config)
         
+        # Layer environment variables on top (highest priority)
+        self._override_with_env_vars(config)
+
         # Expand paths
         config = self._expand_paths(config)
         
         return config
     
+    def _override_with_env_vars(self, config: Dict):
+        """Overrides config values with environment variables if they exist."""
+        # Map env vars to config paths
+        env_map = {
+            "VTS_USE_EXTERNAL_SERVICE": "api.use_external_service",
+            "VTS_INTERNAL_HOST": "api.internal_service.host",
+            "VTS_INTERNAL_PORT": "api.internal_service.port",
+            "VTS_EXTERNAL_HOST": "api.external_service.host",
+            "VTS_EXTERNAL_USERNAME": "api.external_service.username",
+            "VTS_EXTERNAL_PASSWORD": "api.external_service.password",
+        }
+        
+        for env_var, config_path in env_map.items():
+            value = os.getenv(env_var)
+            if value is not None:
+                logging.info(f"Overriding config with environment variable: {env_var}")
+                
+                # Special handling for boolean flags
+                if env_var == "VTS_USE_EXTERNAL_SERVICE":
+                    value = value.lower() in ('true', '1', 't', 'yes')
+                elif "PORT" in env_var and value.isdigit():
+                    value = int(value)
+
+                # Dive into the config dict to set the value
+                keys = config_path.split('.')
+                d = config
+                for key in keys[:-1]:
+                    d = d.setdefault(key, {})
+                d[keys[-1]] = value
+
     def _merge_configs(self, default: Dict, user: Dict) -> Dict:
         """Recursively merge user config into default config."""
         result = default.copy()
