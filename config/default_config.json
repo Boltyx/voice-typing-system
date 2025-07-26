@@ -1,7 +1,19 @@
 {
   "api": {
-    "endpoint": "http://10.0.0.46:5000/transcribe",
-    "timeout": 300
+    "use_external_service": true,
+    "timeout": 300,
+    "internal_service": {
+      "protocol": "http",
+      "host": "10.0.0.46",
+      "port": 5000
+    },
+    "external_service": {
+      "protocol": "https",
+      "host": "vts.epileptico.com",
+      "port": 443,
+      "username": "david",
+      "password": "Sassieflygplanhelikopter12"
+    }
   },
   "audio": {
     "sample_rate": 16000,

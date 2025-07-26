@@ -22,10 +22,39 @@ class TranscriptionService:
             config_manager: Configuration manager instance
         """
         self.config = config_manager
-        self.api_endpoint = self.config.get_api_endpoint()
-        self.timeout = self.config.get('api.timeout', 30)
-        self.preload_endpoint = self.api_endpoint.replace('/transcribe', '/preload')
+        self._configure_service()
     
+    def _configure_service(self):
+        """Sets up service endpoints and auth based on configuration."""
+        self.timeout = self.config.get('api.timeout', 30)
+        use_external = self.config.get('api.use_external_service', False)
+
+        if use_external:
+            service_config = self.config.get('api.external_service')
+            protocol = service_config.get('protocol', 'https')
+            host = service_config.get('host')
+            port = service_config.get('port')
+            username = service_config.get('username')
+            password = service_config.get('password')
+            
+            self.base_url = f"{protocol}://{host}:{port}"
+            self.auth = (username, password)
+            self.verify = True
+            logging.info("Configured to use EXTERNAL transcription service.")
+        else:
+            service_config = self.config.get('api.internal_service')
+            protocol = service_config.get('protocol', 'http')
+            host = service_config.get('host')
+            port = service_config.get('port')
+
+            self.base_url = f"{protocol}://{host}:{port}"
+            self.auth = None
+            self.verify = False # Typically false for local, non-HTTPS services
+            logging.info("Configured to use INTERNAL transcription service.")
+
+        self.api_endpoint = f"{self.base_url}/transcribe"
+        self.preload_endpoint = f"{self.base_url}/preload"
+
     def _post_process_transcript(self, transcript: str) -> str:
         """Apply post-processing rules to the transcript."""
         # Remove "Thanks for watching" variants if enabled
@@ -77,12 +106,17 @@ class TranscriptionService:
             with open(audio_file, 'rb') as f:
                 files = {'file': (audio_file.name, f, 'audio/wav')}
                 
+                # Prepare request arguments
+                request_args = {
+                    "files": files,
+                    "timeout": self.timeout
+                }
+                if self.auth:
+                    request_args["auth"] = self.auth
+                    request_args["verify"] = self.verify
+
                 # Send request to API
-                response = requests.post(
-                    self.api_endpoint,
-                    files=files,
-                    timeout=self.timeout
-                )
+                response = requests.post(self.api_endpoint, **request_args)
             
             # Check response
             if response.status_code == 200:
@@ -123,10 +157,15 @@ class TranscriptionService:
         try:
             logging.info("Preloading Whisper model...")
             
-            response = requests.post(
-                self.preload_endpoint,
-                timeout=self.timeout
-            )
+            # Prepare request arguments
+            request_args = {
+                "timeout": self.timeout
+            }
+            if self.auth:
+                request_args["auth"] = self.auth
+                request_args["verify"] = self.verify
+            
+            response = requests.post(self.preload_endpoint, **request_args)
             
             if response.status_code == 200:
                 result = response.json()
@@ -144,10 +183,10 @@ class TranscriptionService:
                 return False
                 
         except requests.exceptions.Timeout:
-            logging.warning("PRELOAD TIMEOUT: Model preload request timed out after {self.timeout} seconds")
+            logging.warning(f"PRELOAD TIMEOUT: Model preload request timed out after {self.timeout} seconds")
             return False
         except requests.exceptions.ConnectionError:
-            logging.warning(f"Failed to connect to preload endpoint: {self.preload_endpoint}")
+            logging.error(f"Failed to connect to API endpoint: {self.api_endpoint}")
             return False
         except Exception as e:
             logging.error(f"Error during model preload: {e}")
