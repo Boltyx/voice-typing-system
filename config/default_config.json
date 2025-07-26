@@ -1,0 +1,28 @@
+{
+  "api": {
+    "endpoint": "http://10.0.0.46:5000/transcribe",
+    "timeout": 300
+  },
+  "audio": {
+    "sample_rate": 16000,
+    "channels": 1,
+    "format": "wav",
+    "chunk_size": 1024
+  },
+  "recording": {
+    "directory": "~/.local/share/voice-typing-system/recordings",
+    "max_duration": 600,
+    "save_on_abort": true
+  },
+  "hotkey": {
+    "combination": "ctrl+shift+t"
+  },
+  "ui": {
+    "tray_icon_idle_color": "#808080",
+    "tray_icon_recording_color": "#ff0000"
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "~/.local/share/voice-typing-system/logs/app.log"
+  }
+} 

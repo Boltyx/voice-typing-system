@@ -1,0 +1,72 @@
+Generic System Tray Application Architecture
+This architecture is for creating a background service on Linux that is managed via a system tray icon. It is designed for easy installation, updating, and management as a self-contained application.
+Here is a diagram illustrating the generalized structure:
+
+
+
+graph TD
+    subgraph "User Interface"
+        A[User] -- "Interacts with" --> B[System Tray Icon & Menu];
+    end
+
+    subgraph "Core Application (src/)"
+        B -- "Sends commands to" --> C{MainApplication};
+        C -- "Manages" --> D[App-Specific Logic];
+        C -- "Uses" --> E[ConfigManager];
+        E -- "Reads/Writes" --> F[config.json];
+    end
+
+    subgraph "Application Logic"
+        D -- "Executes core tasks" --> G[System Resources or APIs];
+    end
+
+    subgraph "Installation & Lifecycle"
+        H[install.sh] -- "1. Creates" --> I[Python venv];
+        H -- "2. Installs" --> J[Dependencies];
+        H -- "3. Creates & Enables" --> K[Systemd Service];
+        L[update.sh] -- "Restarts" --> K;
+        M[force_update.sh] -- "Forces Git Pull & Restarts" --> K;
+        K -- "Runs as background process" --> C;
+    end
+
+    subgraph "Project Structure"
+        N[Root Directory] --> O[src/];
+        N --> P[config/];
+        N --> Q[venv/];
+        N --> H;
+        N --> L;
+        N --> M;
+        N --> R[README.md];
+    end
+
+
+Here is a generalized blueprint of this project's architecture, focusing on the structure and management aspects, so it can be used as a template for other background system utilities.
+Generic System Tray Application Architecture
+This architecture is for creating a background service on Linux that is managed via a system tray icon. It is designed for easy installation, updating, and management as a self-contained application.
+Here is a diagram illustrating the generalized structure:
+Key Architectural Components
+Project Root Directory: The main folder containing all parts of the application.
+src/: Contains all the main Python source code for the application's logic.
+config/: Holds default configuration files.
+venv/: A Python virtual environment to keep dependencies isolated.
+install.sh, update.sh, force_update.sh: Scripts to manage the application's lifecycle.
+README.md: Documentation for the project.
+requirements.txt: A list of Python dependencies.
+Core Application (src/):
+main.py: The entry point of the application. It's responsible for creating the system tray icon and menu, handling user interactions from the menu, and managing the overall application state. It initializes and coordinates the other modules.
+Application-Specific Modules: Any other Python files in src/ that contain the specific logic for what the application actually does (e.g., controlling fan speeds, changing system settings, etc.). This is the primary part you would change for a new service.
+config_manager.py: A reusable module for loading settings from a JSON file. This allows the application's behavior to be configured without changing the code.
+Installation & Lifecycle Management:
+install.sh: An automated script that prepares the system to run the application.
+It creates a Python virtual environment (venv/).
+It installs all necessary libraries from requirements.txt into that environment.
+It creates a systemd user service file. This is a standard Linux way to manage background processes, allowing the app to start on boot and restart automatically if it fails.
+update.sh: A script to apply code changes. It simply restarts the systemd service, causing it to load the latest version of the code from the src/ directory.
+force_update.sh: A more powerful update script that fetches the latest code from a Git repository, and then restarts the service.
+How It Works
+Installation: A user runs install.sh. This sets up the environment and registers the application with systemd.
+Execution: systemd launches the src/main.py script as a background process.
+User Interaction: The application's icon appears in the system tray. The user can click on this icon to open a menu with various options (e.g., "Increase Fan Speed," "Quit").
+Action: When the user selects an option, the main.py script calls the appropriate function in one of the application-specific modules to perform the requested action.
+Configuration: The application loads its settings (e.g., API keys, default values) from a configuration file, managed by the ConfigManager.
+This structure provides a robust and maintainable foundation for building different kinds of system tray utilities. To create a new service, you would primarily focus on writing new application-specific logic within the src/ directory while reusing the existing framework for installation, updates, and user interaction.
