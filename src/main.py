@@ -16,6 +16,7 @@ from pynput import keyboard
 import logging
 import subprocess
 import pyperclip
+import os
 
 from config_manager import ConfigManager
 from audio_manager import AudioManager
@@ -473,37 +474,52 @@ class VoiceTypingSystem(QApplication):
         self.update_visuals()
         self.update_menu_state()
             
-    def quit(self):
-        """Quit the application."""
-        logging.info("Quitting Voice Typing System")
+    def _cleanup(self):
+        """Performs all necessary cleanup before quitting or restarting."""
+        logging.info("Performing application cleanup...")
         
         # Stop recording if active
         if self.state == 'RECORDING':
-            # Use the signal to ensure thread safety, although quit is usually from UI
-            self.stop_recording_request.emit()
+            # This needs to be a direct call, not a signal, to ensure it happens synchronously
+            self.pulse_timer.stop()
+            self.state = 'IDLE' # Set a stable state
+            self.audio_manager.stop_recording(aborted=True)
 
         if self.pulse_timer.isActive():
-            self.pulse_timer.stop()  # Ensure timer is stopped on quit
+            self.pulse_timer.stop()
         
         # Cleanup transcription worker thread
         if self.transcription_worker and self.transcription_worker.isRunning():
             logging.info("Waiting for transcription worker to finish...")
-            self.transcription_worker.stop()  # Signal the thread to stop gracefully
+            self.transcription_worker.stop()
             self.transcription_worker.quit()
-            self.transcription_worker.wait(5000)  # Wait up to 5 seconds
-            if self.transcription_worker.isRunning():
-                logging.warning("Transcription worker did not finish gracefully, terminating...")
-                self.transcription_worker.terminate()
-                self.transcription_worker.wait(2000)  # Wait up to 2 more seconds
+            self.transcription_worker.wait(2000)
         
+        if self.manual_transcription_worker and self.manual_transcription_worker.isRunning():
+            logging.info("Waiting for manual transcription worker to finish...")
+            # Manual worker doesn't have a graceful stop, so we just quit and wait
+            self.manual_transcription_worker.quit()
+            self.manual_transcription_worker.wait(2000)
+
         # Save activation state
         self.save_activation_state()
         
-        # Cleanup
+        # Cleanup audio resources
         self.audio_manager.cleanup()
-        
-        # Quit application
+
+    def quit(self):
+        """Quit the application."""
+        logging.info("Quitting Voice Typing System")
+        self._cleanup()
         super().quit()
+
+    def restart(self):
+        """Restart the application."""
+        logging.info("Restarting application...")
+        self._cleanup()
+        
+        # Replace the current process with a new one
+        os.execv(sys.executable, ['python'] + sys.argv)
 
     def setup_system_tray(self):
         """Setup system tray icon and menu."""
@@ -545,6 +561,12 @@ class VoiceTypingSystem(QApplication):
         self.tray_menu.addAction(self.abort_action)
 
         self.tray_menu.addSeparator()
+
+        # Add Restart action
+        restart_action = QAction("Restart", self)
+        restart_action.triggered.connect(self.restart)
+        self.tray_menu.addAction(restart_action)
+
         quit_action = QAction("Quit", self)
         quit_action.triggered.connect(self.quit)
         self.tray_menu.addAction(quit_action)
