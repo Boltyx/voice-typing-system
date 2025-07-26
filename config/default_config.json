@@ -22,7 +22,7 @@
     "tray_icon_recording_color": "#ff0000"
   },
   "logging": {
-    "level": "INFO",
+    "level": "DEBUG",
     "file": "~/.local/share/voice-typing-system/logs/app.log"
   }
 } 

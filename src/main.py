@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QMessageBox
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QAction
-from PyQt6.QtCore import QThread, pyqtSignal, Qt
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer
 from pynput import keyboard
 import logging
 import subprocess
@@ -90,9 +90,17 @@ class StateManager(dict):
 class VoiceTypingSystem(QApplication):
     """Main application class for Voice Typing System."""
     
+    # Signals for thread-safe UI updates
+    start_recording_request = pyqtSignal()
+    stop_recording_request = pyqtSignal()
+
     def __init__(self, argv):
         super().__init__(argv)
         
+        # Connect signals to slots
+        self.start_recording_request.connect(self.start_recording)
+        self.stop_recording_request.connect(self.stop_recording)
+
         # Initialize components
         self.config = ConfigManager()
         self.state_manager = StateManager(Path.home() / '.local/share/voice-typing-system/state.json')
@@ -101,13 +109,15 @@ class VoiceTypingSystem(QApplication):
         self.text_insertion = TextInsertion()
         
         # Application state
-        self.recording = False
+        self.state = 'IDLE'
         self.transcription_worker = None
         self.activated = True  # Default to activated
-        self.processing = False  # True when transcribing
-        self.error_state = False  # True when in error state
-        self.idle = True # True when idle
         
+        # Pulse animation timer
+        self.pulse_timer = QTimer(self)
+        self.pulse_timer.timeout.connect(self._pulse_icon)
+        self.pulse_state = False
+
         # Load activation state from config
         self.load_activation_state()
         
@@ -143,31 +153,47 @@ class VoiceTypingSystem(QApplication):
         except Exception as e:
             logging.error(f"Failed to save activation state: {e}")
     
-    def update_tray_icon(self):
-        """Update the tray icon based on current state."""
-        # Determine color based on state
-        if not self.activated:
-            # Deactivated - Grey
-            color = QColor('#808080')
-        elif self.error_state:
-            # Error - Red
-            color = QColor('#ff0000')
-        elif self.processing:
-            # Processing/Transcribing - Dull Yellow
-            color = QColor(100, 100, 0)
-        elif self.recording:
-            # Recording - Bright Yellow (pulsing is handled by a timer)
-            color = QColor(255, 255, 0)
-        elif self.idle:
-            # Active and ready - Green
-            color = QColor('#00ff00')
-        else:
-            # Default to green if state is ambiguous
-            color = QColor('#00ff00')
+    def _pulse_icon(self):
+        """Handle the pulsing animation for the recording icon."""
+        # This function is now only responsible for the visual pulse
+        logging.debug(f"PULSE: Timer fired. Current state: {self.state}")
+        self.pulse_state = not self.pulse_state
+        color = QColor(255, 255, 0) if self.pulse_state else QColor(200, 200, 0)
+        self.tray_icon.setIcon(self.create_simple_icon(color))
 
-        icon = self.create_simple_icon(color)
-        self.tray_icon.setIcon(icon)
-    
+    def update_visuals(self):
+        """
+        Centralized method to update all visuals based on the current state.
+        This is the single source of truth for how the app looks.
+        """
+        logging.debug(f"VISUALS: Updating visuals for state: {self.state}")
+        # Stop any running pulse timer by default
+        if self.pulse_timer.isActive():
+            logging.debug("VISUALS: Pulse timer is active, stopping it.")
+            self.pulse_timer.stop()
+        
+        color = None
+        if not self.activated:
+            color = QColor('#808080') # Grey
+        elif self.state == 'ERROR':
+            color = QColor('#ff0000') # Red
+        elif self.state == 'PROCESSING':
+            color = QColor(100, 100, 0) # Dull yellow
+        elif self.state == 'IDLE':
+            color = QColor('#00ff00') # Green
+        elif self.state == 'RECORDING':
+            # For recording, we start the timer which handles its own icons.
+            # Set initial bright state.
+            logging.debug("VISUALS: State is RECORDING. Starting pulse timer.")
+            self.pulse_state = True
+            self.tray_icon.setIcon(self.create_simple_icon(QColor(255, 255, 0)))
+            self.pulse_timer.start(500)
+            return # Return early to not set a static icon
+        
+        if color:
+            self.tray_icon.setIcon(self.create_simple_icon(color))
+            logging.debug(f"VISUALS: Set static icon to color: {color.name()}")
+
     def create_simple_icon(self, color):
         """Create a simple solid color icon."""
         pixmap = QPixmap(32, 32)
@@ -210,49 +236,52 @@ class VoiceTypingSystem(QApplication):
         logging.info("Hotkey listener started: <ctrl>+<shift>+t")
     
     def toggle_recording(self):
-        """Toggle recording state."""
-        if self.recording:
-            self.stop_recording()
+        """Thread-safe method to request a recording state change."""
+        if self.state == 'RECORDING':
+            self.stop_recording_request.emit()
         else:
-            self.start_recording()
+            self.start_recording_request.emit()
     
     def start_recording(self):
-        """Start audio recording."""
-        if self.recording or not self.activated:
+        """Start audio recording. MUST be called from the main GUI thread."""
+        if self.state == 'RECORDING' or not self.activated:
             return
-        self.recording = True
-        self.error_state = False  # Clear any previous errors
-        self.idle = False
+        
+        logging.debug("ACTION: Start recording requested.")
+        self.state = 'RECORDING'
+        self.update_visuals()
         self.record_action.setText("Stop Recording")
-        self.update_tray_icon()
+        self.update_menu_state()
+        
         # Preload the model in background thread for faster transcription
         self.preload_model_async()
         # Start recording
         self.audio_manager.start_recording(self.on_recording_complete)
-        self.update_menu_state() # Update menu to show abort option
         logging.info("Recording started")
     
     def stop_recording(self):
-        """Stop audio recording and proceed with transcription."""
-        if not self.recording:
+        """Stop audio recording and proceed with transcription. MUST be called from the main GUI thread."""
+        if self.state != 'RECORDING':
             return
-        self.recording = False
+        
+        logging.debug("ACTION: Stop recording requested.")
+        self.state = 'PROCESSING'
+        self.update_visuals()
         self.record_action.setText("Start Recording")
         self.audio_manager.stop_recording(aborted=False)
-        self.processing = True # Set processing state immediately
-        self.update_tray_icon()
         self.update_menu_state()
         logging.info("Recording stopped for transcription")
     
     def abort_recording(self):
         """Abort audio recording without transcription."""
-        if not self.recording:
+        if self.state != 'RECORDING':
             return
-        self.recording = False
+        
+        logging.debug("ACTION: Abort recording requested.")
+        self.state = 'IDLE'
+        self.update_visuals()
         self.record_action.setText("Start Recording")
         self.audio_manager.stop_recording(aborted=True)
-        self.idle = True # Return to idle state
-        self.update_tray_icon()
         self.update_menu_state()
         logging.info("Recording aborted by user")
 
@@ -275,10 +304,10 @@ class VoiceTypingSystem(QApplication):
             logging.error("Audio recording failed or no audio captured")
             if 'error' in metadata:
                 logging.error(f"Recording error: {metadata['error']}")
-            # Set error state
-            self.error_state = True
-            self.processing = False
-            self.update_tray_icon()
+            
+            logging.debug("EVENT: Recording complete with failure.")
+            self.state = 'ERROR'
+            self.update_visuals()
             # Show notification
             self.tray_icon.showMessage(
                 "Voice Typing System",
@@ -291,16 +320,18 @@ class VoiceTypingSystem(QApplication):
         # Notify if clipping detected
         if metadata.get('clipping_detected'):
             percent = metadata.get('clipping_percent', 0.0)
-            self.tray_icon.showMessage(
-                "Voice Typing System",
-                f"Warning: {percent:.2f}% of your recording is clipped. Consider lowering your microphone input level in system settings.",
-                QSystemTrayIcon.MessageIcon.NoIcon,
-                5000
-            )
-        # Set processing state (solid yellow)
-        self.processing = True
-        self.idle = False
-        self.update_tray_icon()
+            # self.tray_icon.showMessage(
+            #     "Voice Typing System",
+            #     f"Warning: {percent:.2f}% of your recording is clipped. Consider lowering your microphone input level in system settings.",
+            #     QSystemTrayIcon.MessageIcon.NoIcon,
+            #     5000
+            # )
+            logging.info(f"Clipping detected: {percent:.2f}%")
+        
+        logging.debug("EVENT: Recording complete with success.")
+        self.state = 'PROCESSING'
+        self.update_visuals()
+
         # Get session directory
         session_dir = audio_file.parent
         # Start transcription in background thread
@@ -312,12 +343,8 @@ class VoiceTypingSystem(QApplication):
     
     def on_transcription_complete(self, transcript, success):
         """Called when transcription is complete."""
-        # Clear processing state
-        self.processing = False
-        self.idle = True
-        
         if success and transcript:
-            logging.info(f"Transcription successful: {len(transcript)} characters")
+            logging.debug(f"EVENT: Transcription complete with success. Length: {len(transcript)}")
             
             # Insert text into focused field
             insertion_method = self.text_insertion.insert_text(transcript)
@@ -333,15 +360,10 @@ class VoiceTypingSystem(QApplication):
                     self.transcription_service.update_metadata(
                         session_dir, {'insertion_method': insertion_method}
                     )
-
-                # Success - back to green
-                self.error_state = False
-                self.update_tray_icon()
+                self.state = 'IDLE'
             else:
                 logging.warning("Failed to insert text - no text box in focus")
-                # Not an error, just no focus - show notification
-                self.error_state = False
-                self.update_tray_icon()
+                self.state = 'IDLE'
                 self.tray_icon.showMessage(
                     "Voice Typing System",
                     "Transcription complete, no text box in focus",
@@ -349,26 +371,23 @@ class VoiceTypingSystem(QApplication):
                     3000
                 )
         else:
+            logging.debug("EVENT: Transcription complete with failure.")
             logging.error("Transcription failed")
-            # Set error state
-            self.error_state = True
-            self.update_tray_icon()
+            self.state = 'ERROR'
+        
+        self.update_visuals()
             
-            # Show error notification
-            self.tray_icon.showMessage(
-                "Voice Typing System",
-                "Transcription failed",
-                QSystemTrayIcon.MessageIcon.Critical,
-                3000
-            )
-    
     def quit(self):
         """Quit the application."""
         logging.info("Quitting Voice Typing System")
         
         # Stop recording if active
-        if self.recording:
-            self.stop_recording()
+        if self.state == 'RECORDING':
+            # Use the signal to ensure thread safety, although quit is usually from UI
+            self.stop_recording_request.emit()
+
+        if self.pulse_timer.isActive():
+            self.pulse_timer.stop()  # Ensure timer is stopped on quit
         
         # Cleanup transcription worker thread
         if self.transcription_worker and self.transcription_worker.isRunning():
@@ -420,7 +439,7 @@ class VoiceTypingSystem(QApplication):
         quit_action.triggered.connect(self.quit)
         self.tray_menu.addAction(quit_action)
         self.tray_icon.setContextMenu(self.tray_menu)
-        self.update_tray_icon()
+        self.update_visuals()
         self.tray_icon.show()
         self.update_menu_state()
 
@@ -443,13 +462,14 @@ class VoiceTypingSystem(QApplication):
         self.activated = not self.activated
         self.save_activation_state()
         self.update_menu_state()
-        self.update_tray_icon()
+        self.update_visuals()
         if self.activated:
             logging.info("Voice Typing System activated")
             self.setup_hotkey_listener()
         else:
             logging.info("Voice Typing System deactivated")
-            self.stop_recording()  # Stop any ongoing recording
+            if self.state == 'RECORDING':
+                self.stop_recording_request.emit()  # Use signal for thread safety
             if hasattr(self, 'keyboard_listener'):
                 self.keyboard_listener.stop()
 
@@ -463,7 +483,7 @@ class VoiceTypingSystem(QApplication):
             self.record_action.setEnabled(False)
         
         # Enable/disable abort action based on recording state
-        self.abort_action.setEnabled(self.recording)
+        self.abort_action.setEnabled(self.state == 'RECORDING')
     
     def update_device_menu(self):
         """Update the audio device selection menu."""
