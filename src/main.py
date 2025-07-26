@@ -15,6 +15,7 @@ from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer
 from pynput import keyboard
 import logging
 import subprocess
+import pyperclip
 
 from config_manager import ConfigManager
 from audio_manager import AudioManager
@@ -116,6 +117,7 @@ class VoiceTypingSystem(QApplication):
         self.state = 'IDLE'
         self.transcription_worker = None
         self.activated = True  # Default to activated
+        self.last_transcript_text = None # To store the last successful transcript
         
         # Pulse animation timer
         self.pulse_timer = QTimer(self)
@@ -348,6 +350,7 @@ class VoiceTypingSystem(QApplication):
         """Called when transcription is complete."""
         if success and transcript:
             logging.debug(f"EVENT: Transcription complete with success. Length: {len(transcript)}")
+            self.last_transcript_text = transcript
             
             # Insert text into focused field
             insertion_method = self.text_insertion.insert_text(transcript)
@@ -372,9 +375,9 @@ class VoiceTypingSystem(QApplication):
             logging.debug("EVENT: Transcription complete with failure.")
             logging.error("Transcription failed")
             self.state = 'ERROR'
-            self.notification.show_message("Transcription failed")
         
         self.update_visuals()
+        self.update_menu_state()
             
     def quit(self):
         """Quit the application."""
@@ -428,6 +431,11 @@ class VoiceTypingSystem(QApplication):
         open_dir_action.triggered.connect(self.open_recording_directory)
         self.tray_menu.addAction(open_dir_action)
 
+        # Add "Copy to Clipboard" action
+        self.copy_to_clipboard_action = QAction("Add latest to clipboard", self)
+        self.copy_to_clipboard_action.triggered.connect(self.copy_last_transcript_to_clipboard)
+        self.tray_menu.addAction(self.copy_to_clipboard_action)
+
         # Add Abort action (added near the bottom as requested)
         self.abort_action = QAction("Abort Transcription", self)
         self.abort_action.triggered.connect(self.abort_recording)
@@ -472,6 +480,15 @@ class VoiceTypingSystem(QApplication):
             if hasattr(self, 'keyboard_listener'):
                 self.keyboard_listener.stop()
 
+    def copy_last_transcript_to_clipboard(self):
+        """Copies the last successful transcript to the clipboard."""
+        if self.last_transcript_text:
+            pyperclip.copy(self.last_transcript_text)
+            self.notification.show_message("Last transcript copied to clipboard.")
+            logging.info("Copied last transcript to clipboard.")
+        else:
+            logging.warning("Attempted to copy last transcript, but none exists.")
+
     def update_menu_state(self):
         """Update menu items based on current state."""
         if self.activated:
@@ -483,6 +500,7 @@ class VoiceTypingSystem(QApplication):
         
         # Enable/disable abort action based on recording state
         self.abort_action.setEnabled(self.state == 'RECORDING')
+        self.copy_to_clipboard_action.setEnabled(self.last_transcript_text is not None)
     
     def update_device_menu(self):
         """Update the audio device selection menu."""
