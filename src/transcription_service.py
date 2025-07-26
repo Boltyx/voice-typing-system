@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, Optional
 import logging
 from datetime import datetime
+import re
 
 class TranscriptionService:
     """Handles communication with the transcription API."""
@@ -25,6 +26,34 @@ class TranscriptionService:
         self.timeout = self.config.get('api.timeout', 30)
         self.preload_endpoint = self.api_endpoint.replace('/transcribe', '/preload')
     
+    def _post_process_transcript(self, transcript: str) -> str:
+        """Apply post-processing rules to the transcript."""
+        # Remove "Thanks for watching" variants if enabled
+        if self.config.get('post_processing.remove_thanks_for_watching', True):
+            phrases_to_remove = [
+                "Thank you for watching.",
+                "Thanks for watching.",
+                "Thank you for watching!",
+                "Thanks for watching!",
+            ]
+            # Create a regex pattern to find any of these phrases at the end of the string,
+            # ignoring leading/trailing whitespace.
+            # The pattern looks for optional whitespace (\s*), then the phrase,
+            # then optional punctuation (.), and finally the end of the string ($).
+            for phrase in phrases_to_remove:
+                # Escape special regex characters in the phrase
+                safe_phrase = re.escape(phrase.strip().rstrip('!.'))
+                pattern = r"[\s,]*" + safe_phrase + r"[\.!]?[\s]*$"
+                
+                # Use re.IGNORECASE to match "thank you" vs "Thank you"
+                if re.search(pattern, transcript, re.IGNORECASE):
+                    original_transcript = transcript
+                    transcript = re.sub(pattern, "", transcript, flags=re.IGNORECASE)
+                    logging.info(f"Removed '{phrase}' from transcript. Original: '{original_transcript}', New: '{transcript}'")
+                    break # Stop after the first match
+
+        return transcript.strip()
+
     def transcribe_audio(self, audio_file: Path, metadata: Dict) -> Optional[str]:
         """
         Send audio file to transcription API.
@@ -65,8 +94,11 @@ class TranscriptionService:
                     # If not JSON, use response text directly
                     transcript = response.text
                 
-                logging.info(f"Transcription successful: {len(transcript)} characters")
-                return transcript.strip()
+                # Apply post-processing
+                processed_transcript = self._post_process_transcript(transcript.strip())
+                
+                logging.info(f"Transcription successful: {len(processed_transcript)} characters")
+                return processed_transcript
             else:
                 logging.error(f"API request failed with status {response.status_code}: {response.text}")
                 return None

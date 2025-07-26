@@ -24,5 +24,8 @@
   "logging": {
     "level": "DEBUG",
     "file": "~/.local/share/voice-typing-system/logs/app.log"
+  },
+  "post_processing": {
+    "remove_thanks_for_watching": true
   }
 } 

@@ -320,12 +320,12 @@ class VoiceTypingSystem(QApplication):
         # Notify if clipping detected
         if metadata.get('clipping_detected'):
             percent = metadata.get('clipping_percent', 0.0)
-            # self.tray_icon.showMessage(
-            #     "Voice Typing System",
-            #     f"Warning: {percent:.2f}% of your recording is clipped. Consider lowering your microphone input level in system settings.",
-            #     QSystemTrayIcon.MessageIcon.NoIcon,
-            #     5000
-            # )
+            self.tray_icon.showMessage(
+                "Voice Typing System",
+                f"Warning: {percent:.2f}% of your recording is clipped. Consider lowering your microphone input level in system settings.",
+                QSystemTrayIcon.MessageIcon.NoIcon,
+                5000
+            )
             logging.info(f"Clipping detected: {percent:.2f}%")
         
         logging.debug("EVENT: Recording complete with success.")
