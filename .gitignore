@@ -11,3 +11,7 @@ src/__pycache__/
 
 # Environment file
 .env
+
+# Folder view configuration files
+.DS_Store
+Desktop.ini

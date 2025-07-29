@@ -8,6 +8,7 @@ import pyperclip
 import time
 import logging
 from typing import Optional
+import sys
 
 class TextInsertion:
     """Handles text insertion into focused input fields."""
@@ -75,7 +76,9 @@ class TextInsertion:
             if any(ord(char) > 127 for char in text):
                 # Text contains non-ASCII characters, use clipboard
                 pyperclip.copy(text)
-                pyautogui.hotkey('ctrl', 'v')
+                # Detect OS and choose proper hotkey to paste
+                paste_key = 'command' if sys.platform == 'darwin' else 'ctrl'
+                pyautogui.hotkey(paste_key, 'v')
                 return "clipboard_paste_utf8"
             else:
                 pyautogui.write(text)
@@ -102,8 +105,9 @@ class TextInsertion:
             # Set new text to clipboard (properly handles UTF-8)
             pyperclip.copy(text)
             
-            # Paste using Ctrl+V
-            pyautogui.hotkey('ctrl', 'v')
+            # Paste using platform-appropriate hotkey
+            paste_key = 'command' if sys.platform == 'darwin' else 'ctrl'
+            pyautogui.hotkey(paste_key, 'v')
             
             # Restore original clipboard
             pyperclip.copy(original_clipboard)
@@ -128,8 +132,9 @@ class TextInsertion:
             # Set clipboard content (properly handles UTF-8)
             pyperclip.copy(text)
             
-            # Use Ctrl+V to paste
-            pyautogui.hotkey('ctrl', 'v')
+            # Detect OS and choose proper hotkey to paste
+            paste_key = 'command' if sys.platform == 'darwin' else 'ctrl'
+            pyautogui.hotkey(paste_key, 'v')
             
             return "hotkey_paste"
             
